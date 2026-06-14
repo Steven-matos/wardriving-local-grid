@@ -522,6 +522,222 @@ def replay_kind(row: dict) -> str:
     return "wifi"
 
 
+def clamp(value: float, floor: float, ceiling: float) -> float:
+    return max(floor, min(ceiling, value))
+
+
+def rarity_reasons(item: dict, channel_counts: Counter, auth_counts: Counter) -> tuple[int, list[str]]:
+    score = 0
+    reasons: list[str] = []
+    auth = item.get("auth_family") or "Other"
+    channel = item.get("channel")
+    observations = item.get("observations", 1)
+    rssi = item.get("rssi")
+    tags = item.get("signal_tags", [])
+
+    auth_weights = {
+        "WEP": (28, "legacy WEP"),
+        "WPA3": (18, "WPA3"),
+        "Open": (16, "open net"),
+        "WPA": (8, "WPA"),
+        "Other": (10, "unusual auth"),
+    }
+    if auth in auth_weights:
+        weight, reason = auth_weights[auth]
+        score += weight
+        reasons.append(reason)
+
+    if item.get("ssid") == "(hidden)":
+        score += 12
+        reasons.append("hidden SSID")
+
+    if channel is not None and auth != "bluetooth":
+        channel_count = channel_counts.get(str(channel), 0)
+        if channel_count <= 3:
+            score += 16
+            reasons.append(f"sparse ch {channel}")
+        elif channel_count <= 10:
+            score += 8
+            reasons.append(f"low ch {channel}")
+
+    if observations <= 1:
+        score += 14
+        reasons.append("single hit")
+    elif observations <= 3:
+        score += 7
+        reasons.append("low repeat")
+
+    if rssi is not None:
+        if rssi >= -50:
+            score += 10
+            reasons.append("strong RSSI")
+        elif rssi >= -65:
+            score += 5
+            reasons.append("solid RSSI")
+
+    if "flock" in tags:
+        score += 35
+        reasons.append("flock tag")
+    if "bluetooth" in tags:
+        score += 18
+        reasons.append("bluetooth")
+
+    auth_count = auth_counts.get(auth, 0)
+    if auth_count and auth_count <= 3 and auth not in {"WEP", "WPA3", "Open"}:
+        score += 6
+        reasons.append("rare auth")
+
+    return int(clamp(score, 0, 100)), reasons[:4]
+
+
+def heatmap_intensity(item: dict) -> float:
+    rssi = item.get("rssi")
+    observations = item.get("observations", 1)
+    tags = item.get("signal_tags", [])
+    if rssi is None:
+        base = 0.34
+    else:
+        base = (clamp(rssi, -95, -35) + 95) / 60
+    base += min(0.22, math.log10(max(observations, 1)) * 0.16)
+    if "flock" in tags:
+        base += 0.22
+    if "bluetooth" in tags:
+        base += 0.1
+    return round(clamp(base, 0.12, 1), 3)
+
+
+def signal_label(item: dict) -> str:
+    ssid = item.get("ssid") or "(hidden)"
+    if ssid == "(hidden)":
+        return item.get("bssid") or "(hidden)"
+    return ssid
+
+
+def build_rare_signals(items: list[dict], channel_counts: Counter, auth_counts: Counter) -> list[dict]:
+    rare = []
+    for item in items:
+        score, reasons = rarity_reasons(item, channel_counts, auth_counts)
+        if score < 18:
+            continue
+        rare.append(
+            {
+                "label": signal_label(item),
+                "kind": replay_kind(item),
+                "score": score,
+                "reasons": reasons,
+                "rssi": item.get("rssi"),
+                "channel": item.get("channel"),
+                "observations": item.get("observations", 1),
+                "source_file": item.get("source_file", ""),
+                "lat": item.get("lat"),
+                "lon": item.get("lon"),
+            }
+        )
+    rare.sort(key=lambda item: (-item["score"], item["label"]))
+    return rare[:12]
+
+
+def rarity_summary_score(rare_signals: list[dict]) -> int:
+    if not rare_signals:
+        return 0
+    top = rare_signals[: min(10, len(rare_signals))]
+    return round(sum(item["score"] for item in top) / len(top))
+
+
+def build_run_cards(
+    manifest: dict,
+    rows: list[dict],
+    tracks: list[dict],
+    source_dates: dict[str, str],
+    channel_counts: Counter,
+    auth_counts: Counter,
+) -> list[dict]:
+    runs: dict[str, dict] = {}
+    for entry in manifest.get("files", []):
+        run_date = entry.get("capture_date") or "undated"
+        run = runs.setdefault(
+            run_date,
+            {
+                "date": run_date,
+                "files": 0,
+                "categories": Counter(),
+                "observations": 0,
+                "unique_aps": set(),
+                "bluetooth_signals": set(),
+                "flock_signals": set(),
+                "route_miles": 0.0,
+                "rarity_scores": [],
+                "first_seen": "",
+                "last_seen": "",
+            },
+        )
+        run["files"] += 1
+        run["categories"][entry.get("category", "misc")] += 1
+
+    for row in rows:
+        run_date = source_dates.get(row.get("source_file", ""), "undated")
+        run = runs.setdefault(
+            run_date,
+            {
+                "date": run_date,
+                "files": 0,
+                "categories": Counter(),
+                "observations": 0,
+                "unique_aps": set(),
+                "bluetooth_signals": set(),
+                "flock_signals": set(),
+                "route_miles": 0.0,
+                "rarity_scores": [],
+                "first_seen": "",
+                "last_seen": "",
+            },
+        )
+        key = row.get("bssid") or f'{row.get("ssid")}|{row.get("lat")}|{row.get("lon")}'
+        if "bluetooth" in row.get("signal_tags", []):
+            run["bluetooth_signals"].add(key)
+        else:
+            run["unique_aps"].add(key)
+        if "flock" in row.get("signal_tags", []):
+            run["flock_signals"].add(key)
+        score, _reasons = rarity_reasons(row, channel_counts, auth_counts)
+        run["rarity_scores"].append(score)
+        run["observations"] += 1
+        seen = row.get("first_seen", "")
+        if seen:
+            run["first_seen"] = min(filter(None, [run["first_seen"], seen])) if run["first_seen"] else seen
+            run["last_seen"] = max(run["last_seen"], seen)
+
+    for track in tracks:
+        run_date = source_dates.get(track.get("source_file", ""), "undated")
+        run = runs.get(run_date)
+        if run is None:
+            continue
+        for left, right in zip(track["points"], track["points"][1:]):
+            run["route_miles"] += haversine_miles((left["lat"], left["lon"]), (right["lat"], right["lon"]))
+
+    cards = []
+    for run in runs.values():
+        top_scores = sorted(run["rarity_scores"], reverse=True)[:10]
+        cards.append(
+            {
+                "date": run["date"],
+                "files": run["files"],
+                "categories": dict(run["categories"].most_common(4)),
+                "observations": run["observations"],
+                "unique_aps": len(run["unique_aps"]),
+                "bluetooth_signals": len(run["bluetooth_signals"]),
+                "flock_signals": len(run["flock_signals"]),
+                "route_miles": round(run["route_miles"], 2),
+                "rarity_score": round(sum(top_scores) / len(top_scores)) if top_scores else 0,
+                "first_seen": run["first_seen"],
+                "last_seen": run["last_seen"],
+            }
+        )
+    cards.sort(key=lambda item: item["date"], reverse=True)
+    cards.sort(key=lambda item: item["date"] == "undated")
+    return cards[:16]
+
+
 def build_replay_events(rows: list[dict]) -> list[dict]:
     events = []
     for row in rows:
@@ -551,11 +767,13 @@ def build_dashboard_data() -> dict:
     wardrive_rows: list[dict] = []
     tracks: list[dict] = []
     pois: list[dict] = []
+    source_dates: dict[str, str] = {}
 
     for entry in manifest.get("files", []):
         path = ROOT / entry["stored_path"]
         if not path.exists():
             continue
+        source_dates[path.name] = entry.get("capture_date", "undated")
         if entry["category"] == "wardrive":
             wardrive_rows.extend(parse_wigle(path))
         elif entry["category"] in {"tracks", "pois", "gpx"}:
@@ -589,6 +807,12 @@ def build_dashboard_data() -> dict:
             rssi_total += row["rssi"]
             rssi_count += 1
 
+    for item in [*unique_aps.values(), *unique_bluetooth.values()]:
+        rarity_score, reasons = rarity_reasons(item, channel_counts, auth_counts)
+        item["rarity_score"] = rarity_score
+        item["rarity_reasons"] = reasons
+        item["heatmap_intensity"] = heatmap_intensity(item)
+
     route_miles = 0.0
     route_features = []
     for track in tracks:
@@ -620,6 +844,9 @@ def build_dashboard_data() -> dict:
                 "channel": ap["channel"],
                 "rssi": ap["rssi"],
                 "observations": ap["observations"],
+                "rarity_score": ap.get("rarity_score", 0),
+                "rarity_reasons": ap.get("rarity_reasons", []),
+                "heatmap_intensity": ap.get("heatmap_intensity", 0.2),
                 "source_file": ap["source_file"],
                 "type": ap.get("type", "WIFI"),
                 "signal_tags": ap.get("signal_tags", []),
@@ -640,7 +867,11 @@ def build_dashboard_data() -> dict:
                 "first_seen": item["first_seen"],
                 "rssi": item["rssi"],
                 "observations": item["observations"],
+                "rarity_score": item.get("rarity_score", 0),
+                "rarity_reasons": item.get("rarity_reasons", []),
+                "heatmap_intensity": item.get("heatmap_intensity", 0.2),
                 "source_file": item["source_file"],
+                "auth_family": item.get("auth_family", "Other"),
                 "type": item.get("type", "BLE"),
                 "signal_tags": item.get("signal_tags", []),
                 "is_bluetooth": True,
@@ -671,11 +902,21 @@ def build_dashboard_data() -> dict:
     display_route_miles = route_miles if route_miles >= 0.1 else observed_route_miles(wardrive_rows)
     replay_events = build_replay_events(wardrive_rows)
     file_counts = Counter(entry["category"] for entry in manifest.get("files", []))
+    all_unique_signals = [*unique_aps.values(), *unique_bluetooth.values()]
+    rare_signals = build_rare_signals(all_unique_signals, channel_counts, auth_counts)
+    rarity_score = rarity_summary_score(rare_signals)
+    runs = build_run_cards(manifest, wardrive_rows, tracks, source_dates, channel_counts, auth_counts)
+    heatmap_points = [
+        [item["lat"], item["lon"], item.get("heatmap_intensity", 0.2)]
+        for item in all_unique_signals
+        if item.get("lat") is not None and item.get("lon") is not None
+    ]
     score = len(unique_aps) * 10 + round(display_route_miles * 25) + len(pois) * 5
     payload = {
         "generated_at": now_iso(),
         "summary": {
             "score": score,
+            "rarity_score": rarity_score,
             "unique_aps": len(unique_aps),
             "observations": len(wardrive_rows),
             "bluetooth_signals": len(unique_bluetooth),
@@ -695,6 +936,14 @@ def build_dashboard_data() -> dict:
             "channels": dict(sorted(channel_counts.items(), key=lambda item: int(item[0]))),
             "observations_by_day": dict(sorted(observations_by_day.items())),
             "files": dict(file_counts.most_common()),
+        },
+        "analytics": {
+            "rare_signals": rare_signals,
+        },
+        "runs": runs,
+        "heatmap": {
+            "points": heatmap_points,
+            "max": 1,
         },
         "features": {"type": "FeatureCollection", "features": ap_features},
         "bluetooth": {"type": "FeatureCollection", "features": bluetooth_features},

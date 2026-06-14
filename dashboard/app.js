@@ -1,6 +1,6 @@
 const state = {
   layers: {},
-  visible: { aps: true, bluetooth: true, flock: true, routes: true, pois: true },
+  visible: { aps: true, bluetooth: true, flock: true, routes: true, pois: true, heatmap: true },
   data: null,
   replay: {
     events: [],
@@ -46,6 +46,21 @@ function text(id, value) {
 
 function number(value) {
   return new Intl.NumberFormat().format(value ?? 0);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function compactDate(value) {
+  if (!value || value === "undated") return "undated";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.valueOf())) return value;
+  return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
 function makeBars(id, values, maxRows = 12) {
@@ -101,7 +116,7 @@ function addLayers(data) {
       const p = feature.properties;
       layer.bindPopup(`<strong>${p.source_file}</strong><br>${p.points} GPS points<br>${p.start || ""}`);
     },
-  }).addTo(map);
+  });
 
   state.layers.aps = L.geoJSON(data.features, {
     pointToLayer: (feature, latlng) => {
@@ -120,11 +135,12 @@ function addLayers(data) {
         <strong>${p.ssid}</strong><br>
         ${p.bssid}<br>
         ${p.auth_family} / ch ${p.channel ?? "n/a"} / ${p.rssi ?? "n/a"} dBm<br>
+        rarity ${p.rarity_score ?? 0} ${p.rarity_reasons?.length ? `(${p.rarity_reasons.join(", ")})` : ""}<br>
         ${p.first_seen || ""}<br>
         <small>${p.source_file}</small>
       `);
     },
-  }).addTo(map);
+  });
 
   state.layers.bluetooth = L.geoJSON(data.bluetooth, {
     pointToLayer: (feature, latlng) =>
@@ -143,12 +159,13 @@ function addLayers(data) {
         <strong>Bluetooth signal</strong><br>
         ${p.bssid}<br>
         ${p.type || "BLE"} / ${p.rssi ?? "n/a"} dBm<br>
+        rarity ${p.rarity_score ?? 0} ${p.rarity_reasons?.length ? `(${p.rarity_reasons.join(", ")})` : ""}<br>
         ${p.first_seen || ""}<br>
         observations: ${p.observations ?? 1}<br>
         <small>${p.source_file}</small>
       `);
     },
-  }).addTo(map);
+  });
 
   state.layers.flock = L.geoJSON(data.flock, {
     pointToLayer: (feature, latlng) =>
@@ -167,11 +184,12 @@ function addLayers(data) {
         <strong>Flock signal</strong><br>
         ${p.ssid} / ${p.bssid}<br>
         ${p.auth_family} / ch ${p.channel ?? "n/a"} / ${p.rssi ?? "n/a"} dBm<br>
+        rarity ${p.rarity_score ?? 0} ${p.rarity_reasons?.length ? `(${p.rarity_reasons.join(", ")})` : ""}<br>
         ${p.first_seen || ""}<br>
         <small>${p.source_file}</small>
       `);
     },
-  }).addTo(map);
+  });
 
   state.layers.pois = L.geoJSON(data.pois, {
     pointToLayer: (_feature, latlng) =>
@@ -186,15 +204,53 @@ function addLayers(data) {
       const p = feature.properties;
       layer.bindPopup(`<strong>${p.name}</strong><br>${p.time || ""}<br><small>${p.source_file}</small>`);
     },
-  }).addTo(map);
+  });
+
+  state.layers.heatmap = makeHeatmapLayer(data.heatmap?.points || []);
+
+  Object.entries(state.layers).forEach(([key, layer]) => {
+    if (state.visible[key]) layer.addTo(map);
+  });
 
   state.replay.layer.addTo(map);
   state.replay.path.addTo(map);
 
-  const bounds = L.featureGroup(Object.values(state.layers)).getBounds();
+  const boundsLayers = ["routes", "aps", "bluetooth", "flock", "pois"]
+    .map((key) => state.layers[key])
+    .filter(Boolean);
+  const bounds = L.featureGroup(boundsLayers).getBounds();
   if (bounds.isValid()) {
     map.fitBounds(bounds.pad(0.15));
   }
+}
+
+function makeHeatmapLayer(points) {
+  if (!points.length) return L.layerGroup();
+  if (typeof L.heatLayer === "function") {
+    return L.heatLayer(points, {
+      radius: 24,
+      blur: 20,
+      max: 1,
+      maxZoom: 18,
+      gradient: {
+        0.18: "#4ea7ff",
+        0.42: "#58ffea",
+        0.68: "#ffcf5a",
+        1: "#ff3df2",
+      },
+    });
+  }
+  return L.layerGroup(
+    points.map(([lat, lon, intensity]) =>
+      L.circleMarker([lat, lon], {
+        radius: 12 + intensity * 24,
+        stroke: false,
+        fillColor: intensity > 0.72 ? "#ff3df2" : intensity > 0.48 ? "#ffcf5a" : "#58ffea",
+        fillOpacity: 0.06 + intensity * 0.16,
+        interactive: false,
+      })
+    )
+  );
 }
 
 function bindToggles() {
@@ -203,6 +259,7 @@ function bindToggles() {
       const key = button.dataset.layer;
       state.visible[key] = !state.visible[key];
       button.classList.toggle("active", state.visible[key]);
+      if (!state.layers[key]) return;
       if (state.visible[key]) {
         state.layers[key].addTo(map);
       } else {
@@ -400,12 +457,75 @@ function bindReplay() {
   });
 }
 
+function renderRunCards(runs = []) {
+  const container = document.getElementById("runCards");
+  if (!runs.length) {
+    container.innerHTML = `<p class="empty-state">no runs loaded</p>`;
+    return;
+  }
+  container.innerHTML = runs
+    .map((run) => {
+      const categories = Object.entries(run.categories || {})
+        .map(([label, count]) => `${escapeHtml(label)} ${number(count)}`)
+        .join(" / ");
+      return `
+        <article class="run-card">
+          <div class="run-card-head">
+            <strong>${escapeHtml(compactDate(run.date))}</strong>
+            <span>R${number(run.rarity_score)}</span>
+          </div>
+          <div class="run-card-grid">
+            <span><b>${number(run.unique_aps)}</b> APs</span>
+            <span><b>${number(run.observations)}</b> obs</span>
+            <span><b>${number(run.bluetooth_signals)}</b> BT</span>
+            <span><b>${number(run.flock_signals)}</b> flock</span>
+            <span><b>${run.route_miles}</b> mi</span>
+            <span><b>${number(run.files)}</b> files</span>
+          </div>
+          <small>${categories || "no categories"}</small>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderRareSignals(signals = []) {
+  const container = document.getElementById("rareSignals");
+  if (!signals.length) {
+    container.innerHTML = `<p class="empty-state">no rare signals yet</p>`;
+    return;
+  }
+  container.innerHTML = signals
+    .slice(0, 8)
+    .map((signal) => `
+      <button class="rare-signal" type="button" data-lat="${signal.lat ?? ""}" data-lon="${signal.lon ?? ""}">
+        <span>
+          <strong>${escapeHtml(signal.label)}</strong>
+          <small>${escapeHtml(signal.kind)} / ${signal.rssi ?? "n/a"} dBm / ch ${signal.channel ?? "n/a"}</small>
+        </span>
+        <em>${number(signal.score)}</em>
+        <small class="rare-reasons">${escapeHtml((signal.reasons || []).join(" + "))}</small>
+      </button>
+    `)
+    .join("");
+  container.querySelectorAll(".rare-signal").forEach((button) => {
+    button.addEventListener("click", () => {
+      const lat = Number(button.dataset.lat);
+      const lon = Number(button.dataset.lon);
+      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+        map.flyTo([lat, lon], Math.max(map.getZoom(), 16), { duration: 0.7 });
+      }
+    });
+  });
+}
+
 function updateHud(data) {
   state.data = data;
   state.replay.events = data.replay?.events || [];
   clearReplay();
   const s = data.summary;
   text("score", number(s.score));
+  text("rarityScore", number(s.rarity_score));
   text("uniqueAps", number(s.unique_aps));
   text("observations", number(s.observations));
   text("routeMiles", s.route_miles);
@@ -418,10 +538,15 @@ function updateHud(data) {
   text("fileCount", number(s.files));
   makeBars("authBars", data.charts.auth, 7);
   makeBars("channelBars", data.charts.channels, 14);
+  const rareSignals = data.analytics?.rare_signals || [];
+  text("raritySignal", rareSignals[0] ? `${rareSignals[0].label} / ${rareSignals[0].score}` : "rare signal sweep");
+  renderRunCards(data.runs || []);
+  renderRareSignals(rareSignals);
   const feed = document.getElementById("feed");
   feed.textContent = [
     `generated ${data.generated_at}`,
     `wifi ${number(s.unique_aps)} | bt ${number(s.bluetooth_signals)} | flock ${number(s.flock_signals)}`,
+    `runs ${number((data.runs || []).length)} | rarity ${number(s.rarity_score)} | heat ${number(data.heatmap?.points?.length || 0)}`,
     `replay ${number(state.replay.events.length)} | gps ${number(s.route_points)} | score ${number(s.score)}`,
     "",
     "upload: use Upload Captures",

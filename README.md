@@ -11,6 +11,9 @@ The project is built to keep your raw wardriving data on your machine. The repos
 - Highlights possible Flock-related observations when imported metadata includes `flock`.
 - Draws GPX tracks and POIs when they are present in the imported files.
 - Provides a mission replay timeline to animate observations chronologically.
+- Calculates a local rarity score for unusual signals and high-interest runs.
+- Renders run cards grouped by capture date.
+- Adds a weighted signal heatmap layer.
 - Accepts browser uploads through the dashboard and imports them immediately.
 - Watches or imports from an SD card on Windows.
 - Deduplicates imported files using SHA-256 hashes so repeated SD-card dumps do not dirty the dataset.
@@ -53,7 +56,9 @@ The first screen is the operations dashboard. It includes:
 
 - A Leaflet map with access points, Bluetooth/BLE signals, Flock signals, GPX tracks, and POIs.
 - Layer controls for turning signal categories on and off.
+- A signal heatmap toggle for spotting dense or high-interest zones.
 - Channel distribution, signal mix, route miles, AP counts, observation counts, Bluetooth counts, and open/hidden network stats.
+- Rarity score, rare-signal list, and run cards for comparing capture sessions.
 - Upload Captures for drag-and-drop or file-picker imports.
 - Clean Duplicates for one-click duplicate quarantine.
 - Import Feed showing the latest local import status and helper commands.

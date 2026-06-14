@@ -29,6 +29,12 @@
           <strong id="score">0</strong>
         </div>
 
+        <div class="rarity-card">
+          <span>rarity</span>
+          <strong id="rarityScore">0</strong>
+          <small id="raritySignal">rare signal sweep</small>
+        </div>
+
         <div class="stats-grid">
           <div><span>APs</span><strong id="uniqueAps">0</strong></div>
           <div><span>Obs</span><strong id="observations">0</strong></div>
@@ -43,6 +49,7 @@
           <button class="toggle active" data-layer="aps">Access points</button>
           <button class="toggle active" data-layer="routes">Track routes</button>
           <button class="toggle active" data-layer="pois">POIs</button>
+          <button class="toggle active heat-toggle" data-layer="heatmap">Signal heatmap</button>
         </div>
 
         <div class="panel replay-panel">
@@ -96,6 +103,16 @@
         </div>
 
         <div class="right-scroll">
+          <div class="panel">
+            <div class="panel-title">Run Cards</div>
+            <div id="runCards" class="run-cards"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title">Rare Signals</div>
+            <div id="rareSignals" class="rare-signals"></div>
+          </div>
+
           <div class="panel terminal">
             <div class="panel-title">Import Feed</div>
             <pre id="feed">loading dashboard data...</pre>
@@ -110,6 +127,7 @@
     </main>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
