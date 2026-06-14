@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WDGWars Local Grid</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2358ffea' d='M16 1 31 16 16 31 1 16z'/%3E%3Cpath fill='%2305070d' d='M16 7 25 16 16 25 7 16z'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="map-stage" aria-label="Wardriving map">
+        <div id="map"></div>
+        <div class="scanlines"></div>
+      </section>
+
+      <aside class="hud hud-left" aria-label="Mission stats">
+        <header class="brand">
+          <span class="sigil"></span>
+          <div>
+            <p class="eyebrow">local grid</p>
+            <h1>WDGWars Ops</h1>
+          </div>
+        </header>
+
+        <div class="score">
+          <span>score</span>
+          <strong id="score">0</strong>
+        </div>
+
+        <div class="stats-grid">
+          <div><span>APs</span><strong id="uniqueAps">0</strong></div>
+          <div><span>Obs</span><strong id="observations">0</strong></div>
+          <div><span>Miles</span><strong id="routeMiles">0</strong></div>
+          <div><span>BT</span><strong id="bluetoothSignals">0</strong></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Layer Control</div>
+          <button class="toggle active accent" data-layer="flock">Flock signals</button>
+          <button class="toggle active bluetooth-toggle" data-layer="bluetooth">Bluetooth signals</button>
+          <button class="toggle active" data-layer="aps">Access points</button>
+          <button class="toggle active" data-layer="routes">Track routes</button>
+          <button class="toggle active" data-layer="pois">POIs</button>
+        </div>
+
+        <div class="panel replay-panel">
+          <div class="panel-title">Mission Replay</div>
+          <div class="replay-readout">
+            <span id="replayTime">--:--:--</span>
+            <strong id="replayCount">0 / 0</strong>
+          </div>
+          <input id="replaySlider" class="replay-slider" type="range" min="0" max="0" value="0" />
+          <div class="replay-controls">
+            <button id="replayPlay" class="icon-button" type="button" title="Play replay" aria-label="Play replay">▶</button>
+            <button id="replayReset" class="icon-button" type="button" title="Reset replay" aria-label="Reset replay">↺</button>
+            <select id="replaySpeed" class="replay-speed" aria-label="Replay speed">
+              <option value="8">8x</option>
+              <option value="20" selected>20x</option>
+              <option value="50">50x</option>
+              <option value="120">120x</option>
+            </select>
+          </div>
+          <div class="replay-signal" id="replaySignal">standby</div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Signal Mix</div>
+          <div id="authBars" class="bars"></div>
+        </div>
+      </aside>
+
+      <aside class="hud hud-right" aria-label="Capture details">
+        <form class="panel upload-panel" id="uploadForm">
+          <div class="panel-title">Upload Captures</div>
+          <label class="dropzone" id="dropzone">
+            <input id="fileInput" type="file" name="files" multiple />
+            <span id="uploadLabel">Drop files or select a batch</span>
+          </label>
+          <button class="upload-button" id="uploadButton" type="submit">Upload + Import</button>
+          <button class="upload-button secondary" id="cleanButton" type="button">Clean Duplicates</button>
+          <p id="uploadStatus" class="upload-status">ready for .log, .gpx, .pcap, .csv, .json, .bin</p>
+        </form>
+
+        <div class="panel">
+          <div class="panel-title">Run Telemetry</div>
+          <dl class="telemetry">
+            <div><dt>Open nets</dt><dd id="openNetworks">0</dd></div>
+            <div><dt>Hidden SSIDs</dt><dd id="hiddenSsids">0</dd></div>
+            <div><dt>Avg RSSI</dt><dd id="avgRssi">n/a</dd></div>
+            <div><dt>Flock</dt><dd id="flockSignals">0</dd></div>
+            <div><dt>POIs</dt><dd id="pois">0</dd></div>
+            <div><dt>Files</dt><dd id="fileCount">0</dd></div>
+          </dl>
+        </div>
+
+        <div class="right-scroll">
+          <div class="panel terminal">
+            <div class="panel-title">Import Feed</div>
+            <pre id="feed">loading dashboard data...</pre>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title">Channels</div>
+            <div id="channelBars" class="bars compact"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
